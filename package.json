@@ -1,0 +1,23 @@
+{
+  "name": "smithnav",
+  "version": "1.7.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs && wrangler pages dev",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "db:remote": "wrangler d1 migrations apply DB --remote",
+    "deploy": "node scripts/build.mjs && wrangler pages deploy",
+    "test": "node --test tests/*.test.mjs",
+    "deploy:auto": "node scripts/build.mjs && node scripts/deploy-pages.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0",
+    "miniflare": "^4.0.0"
+  }
+}
