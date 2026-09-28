@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { isAbsolute } from 'node:path';
+import { existsSync } from 'node:fs';
 import { deploymentSettings, cloudflareApi, deployPages, verifyDeployment } from '../scripts/deploy-pages.mjs';
 
 const databaseId = '11111111-2222-3333-4444-555555555555';
@@ -12,7 +14,7 @@ function harness({ existing = false, tables = [], failMigration = false, failDep
   const state = {
     project: existing ? { name: settings.project, production_branch: 'main', subdomain: `${settings.project}.pages.dev`, deployment_configs: { production: { d1_databases: { DB: { id: databaseId } } } }, ...projectOverride } : null,
     database: existing ? { uuid: databaseId, name: 'existing-database' } : null,
-    tables, calls: [], commands: [], configs: [], logs: [],
+    tables, calls: [], commands: [], runOptions: [], configs: [], logs: [],
   };
   const api = async (path, options = {}) => {
     state.calls.push({ path, ...options });
@@ -29,8 +31,9 @@ function harness({ existing = false, tables = [], failMigration = false, failDep
     if (path === `/d1/database/${databaseId}/query`) return [{ success: true, results: state.tables.map(name => ({ name })) }];
     throw new Error('Unexpected request: ' + path);
   };
-  const run = async args => {
+  const run = async (args, options) => {
     state.commands.push(args);
+    state.runOptions.push(options);
     if (args[0] === 'd1') {
       if (failMigration) throw new Error('migration failed');
       state.tables = tableNames;
@@ -55,7 +58,11 @@ test('first deploy provisions D1 and Pages, migrates before publishing, binds pr
   assert.equal(result.url, `https://${settings.project}.pages.dev`);
   assert.equal(state.calls.filter(c => c.method === 'POST' && c.path === '/d1/database').length, 1);
   assert.equal(state.calls.filter(c => c.method === 'POST' && c.path === '/pages/projects').length, 1);
-  assert.deepEqual(state.commands.map(c => c.slice(0, 3)), [['d1', 'migrations', 'apply'], ['pages', 'deploy', 'dist']]);
+  assert.deepEqual(state.commands.map(c => c.slice(0, 2)), [['d1', 'migrations'], ['pages', 'deploy']]);
+  assert.equal(isAbsolute(state.commands[1][2]), true);
+  assert.equal(state.commands[1].includes('--config'), false);
+  assert.equal(isAbsolute(state.runOptions[1].cwd), true);
+  assert.equal(existsSync(state.runOptions[1].cwd), false);
   assert.equal(state.configs[0].d1_databases[0].database_id, databaseId);
   assert.equal(JSON.stringify(state.configs).includes(settings.setupToken), false);
   assert.equal(JSON.stringify(state.configs).includes(settings.token), false);
