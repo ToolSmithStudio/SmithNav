@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
-import { writeFile, unlink, appendFile } from 'node:fs/promises';
+import { writeFile, unlink, appendFile, mkdtemp, rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const uuid = /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i;
 const configPath = 'wrangler.deploy.json';
@@ -112,7 +113,15 @@ export async function deployPages({ settings, api, run, writeConfig, log = conso
     } },
   } });
   log('发布 Pages 网站…');
-  await run(['pages', 'deploy', 'dist', '--project-name', settings.project, '--branch', settings.branch, '--commit-dirty=true', '--config', configPath]);
+  // Pages rejects --config, and deploying from the project root would pick up
+  // the local-only wrangler.toml with its placeholder database ID. Run from an
+  // empty directory so Pages uses the bindings and secret configured above.
+  const pagesCwd = await mkdtemp(join(tmpdir(), 'smithnav-pages-'));
+  try {
+    await run(['pages', 'deploy', resolve('dist'), '--project-name', settings.project, '--branch', settings.branch, '--commit-dirty=true'], { cwd: pagesCwd });
+  } finally {
+    await rm(pagesCwd, { recursive: true, force: true });
+  }
   const deployed = await api(path);
   const domain = deployed?.subdomain;
   if (typeof domain !== 'string' || !/^[a-z\d-]+\.pages\.dev$/.test(domain)) throw new Error('发布命令已完成，但未能读取网站地址，请在 Cloudflare Pages 控制台查看。');
@@ -131,10 +140,10 @@ export async function verifyDeployment(url, { fetchImpl = fetch, wait = ms => ne
   throw new Error('网站已发布，但 /api/status 检查尚未通过。请打开 Pages 控制台检查部署、D1 绑定和访问限制，再重新运行；数据库不会被清空。');
 }
 
-function wrangler(args) {
+function wrangler(args, options = {}) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(process.execPath, ['node_modules/wrangler/bin/wrangler.js', ...args], {
-      shell: false, stdio: ['ignore', 'inherit', 'inherit'],
+    const child = spawn(process.execPath, [resolve('node_modules/wrangler/bin/wrangler.js'), ...args], {
+      shell: false, stdio: ['ignore', 'inherit', 'inherit'], ...options,
       env: { ...process.env, CI: 'true', WRANGLER_SEND_METRICS: 'false' },
     });
     child.on('error', () => reject(new Error('无法启动 Wrangler，请先安装项目依赖。')));
